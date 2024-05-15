@@ -1,0 +1,141 @@
+# Code for API Data Retrieval
+# Module 1 : Setting basic foundations and parameters
+
+import csv # Required to run this program
+import requests
+import time
+
+# Declaring the needed functions
+
+def clear_csv():
+    with open(f'{csv_file_name}.csv', 'w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(["Biomarker", "Organizer", "Phase 1", "Phase 2", "Phase 3", "Phase 4", "Total Phase 1", "Total Phase 2", "Total Phase 3", "Total Phase 4"])
+
+def read_whitelist(filename):
+    with open(filename, 'r') as file:
+        whitelist = [line.strip() for line in file if line.strip()]
+    return whitelist
+
+def replace_special_characters(text):
+    return text.replace(' ', '+').replace('&', '%26').replace('#','%23').replace('™','%99').replace('®','%AE').replace(':','%3A').replace('/','%2F').replace('.','%2E')
+
+def return_special_characters(text):
+    return text.replace('+', ' ').replace('%26', '&').replace('%23','#').replace('%99','™').replace('%AE','®').replace('%3A',':').replace('%2F','/').replace('%2E','.')
+
+# Declaring the needed variables for f-strings
+
+biomarker_whitelist = read_whitelist('biomarker_whitelist.txt') 
+organizer_whitelist = read_whitelist('organizer_whitelist.txt')
+skip_organizer = ['']   #Skipping specific companies in string
+skipover_biomarker = ['']   #Skipping specific biomarkers in string
+csv_file_name = 'API_Data'
+
+# Module 2 :Starting loops and setting counters
+
+company_phases = {}
+valid_values_counter = 0  
+
+# Processes only these biomarkers in the form, " x, y, z, .... "
+priority_biomarker_string = ""  # Set 'None' for all biomarkers, processes only those conditions
+priority_biomarkers = [bm.strip() for bm in priority_biomarker_string.split(',')] if priority_biomarker_string else None
+
+if priority_biomarkers is not None:
+    # If any present, processes only those biomarkers
+    biomarkers_to_process = priority_biomarkers
+else:
+    # If absent, processes the entire list in file
+    biomarkers_to_process = biomarker_whitelist
+
+if biomarkers_to_process and organizer_whitelist:
+    clear_csv()  # Clears CSV file when starting to remove redundant values
+
+    for biomarker in biomarkers_to_process:
+        sanitized_biomarker = replace_special_characters(biomarker)
+        company_phases[sanitized_biomarker] = {}
+        if biomarker in skipover_biomarker:
+            print(f"Already finished biomarkers: {biomarker}") 
+            continue  # Skip to the next biomarker if in skipover_biomarker[''] function
+
+        total_phases_for_biomarker = {"Total Phase 1": 0, "Total Phase 2": 0, "Total Phase 3": 0, "Total Phase 4": 0} # Adding a total count to every unique condition
+
+        for organizer in organizer_whitelist:
+            if organizer in skip_organizer:
+                print(f"Skipping Organizer {organizer}...")
+                continue
+            
+            #Cleans up company name to fit url template
+            sanitized_organizer = replace_special_characters(organizer)
+            url_template = f'https://clinicaltrials.gov/api/v2/studies?format=json&query.term={sanitized_biomarker}&query.lead={sanitized_organizer}'
+            url = url_template
+            response = requests.get(url_template)
+
+            if response.status_code == 200: # 200 is successful execution
+                data = response.json()
+                studies = data.get('studies', [])
+                phase_counters = {"Phase 1": 0, "Phase 2": 0, "Phase 3": 0, "Phase 4": 0}
+
+# Module 3 :Looping the printing of data into the csv file            
+                
+                #Main loop for value checking in the returned API response ( Other values to be searched need to be declared and added here )
+                if studies:
+                    for study in studies:
+                        protocol_section = study.get('protocolSection', {})
+                        design_module = protocol_section.get('designModule', {})
+                        phases = design_module.get('phases', [])
+
+                        if not phases: # Removes invalid URLs
+                            print(f"No Phases Found...")
+                        else:
+
+                            #Conditions to check if Phases are present
+                            print(f"        Link obtained: {return_special_characters(biomarker)}/ Organizer: {return_special_characters(organizer)} \n")  # Comment this line to remove links in output line
+                            if "PHASE1" in phases:
+                                phase_counters["Phase 1"] += 1
+                                total_phases_for_biomarker["Total Phase 1"] += 1
+                            if "PHASE2" in phases:
+                                phase_counters["Phase 2"] += 1
+                                total_phases_for_biomarker["Total Phase 2"] += 1
+                            if "PHASE3" in phases:
+                                phase_counters["Phase 3"] += 1
+                                total_phases_for_biomarker["Total Phase 3"] += 1
+                            if "PHASE4" in phases:
+                                phase_counters["Phase 4"] += 1
+                                total_phases_for_biomarker["Total Phase 4"] += 1
+                            total_phases_biomarker_cumulative = phase_counters["Phase 4"] + phase_counters["Phase 4"] + phase_counters["Phase 4"] + phase_counters["Phase 4"]
+                                     
+                    # Printing the data
+                    print(f"        All studies processed for Biomarker: {return_special_characters(biomarker)}, Organizer: {return_special_characters(organizer)}") # Comment out to avoid line
+                    print(f"        \n Valid Link(s)! Phase Counters Biomarker: {return_special_characters(biomarker)} and Organizer: {return_special_characters(organizer)} - {phase_counters} \n",url)
+                    time.sleep(0.25)
+
+                    # Appends data to CSV file as named
+                    with open(f'{csv_file_name}.csv', 'a', newline='') as file:
+                        writer = csv.writer(file)
+                        writer.writerow([return_special_characters(biomarker), return_special_characters(organizer),
+                                         phase_counters["Phase 1"], phase_counters["Phase 2"],
+                                         phase_counters["Phase 3"], phase_counters["Phase 4"],
+                                         total_phases_for_biomarker["Total Phase 1"], total_phases_for_biomarker["Total Phase 2"],
+                                         total_phases_for_biomarker["Total Phase 3"], total_phases_for_biomarker["Total Phase 4"]])
+                    valid_values_counter += 1  # Increment counter value for sleep checking
+
+                    if valid_values_counter == 20:
+                        print("Sleeping after 20 actual values...")
+                        time.sleep(30)  # Pauses for 30 seconds after the value values, modify to increase timer
+                        valid_values_counter = 0  # Resets counter after sleeping
+
+                else:
+                    print(f"    No studies found for Biomarker: {return_special_characters(biomarker)}, Organizer: {return_special_characters(organizer)}")
+
+        # Prints total phases for biomarker loop
+        print(f"\nTotal Phases for Biomarker: {return_special_characters(biomarker)} - {total_phases_for_biomarker} \n Total phases = ", total_phases_biomarker_cumulative) # Comment to remove line
+
+        # Resets total phases for biomarker loop
+        total_phases_for_biomarker = {"Total Phase 1": 0, "Total Phase 2": 0, "Total Phase 3": 0, "Total Phase 4": 0}
+
+    #Prints after all data is appended
+    print("\nData has been appended to the CSV file.")
+
+#When no whitelist is set
+else:
+    print("Whitelist(s) not found, check again")
